@@ -47,3 +47,13 @@ test('destination failure does not remove source tasks', async()=> {
     expect(content.get(files[1].path)).toBe(before);
   } finally {vi.useRealTimers();}
 });
+
+test('concurrent create event and manual command do not duplicate tasks', async()=> {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-21T12:00:00Z'));
+  try {
+    const {plugin,files,content}=setup();
+    await Promise.all([plugin.rollover(files[2]), plugin.rollover()]);
+    expect((content.get(files[2].path).match(/Parent/g)||[]).length).toBe(1);
+    expect(plugin.app.vault.modify).toHaveBeenCalledTimes(2);
+  } finally {vi.useRealTimers();}
+});
