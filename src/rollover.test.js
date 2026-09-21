@@ -57,3 +57,41 @@ test('concurrent create event and manual command do not duplicate tasks', async(
     expect(plugin.app.vault.modify).toHaveBeenCalledTimes(2);
   } finally {vi.useRealTimers();}
 });
+
+test('custom range creation applies template, rolls tasks, opens one file, and supports manual lookup without core', async()=> {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-23T12:00:00Z'));
+  try {
+    const {plugin,files,content}=setup();
+    plugin.settings = {...plugin.settings,weeklyNotesEnabled:true,weeklyFolder:'weekly',weeklyTemplate:'templates/Weekly Note.md',rolloverOnFileCreate:true};
+    plugin.app.internalPlugins.plugins['daily-notes'].enabled=false;
+    files.forEach(file=>content.delete(file.path));
+    files.splice(0,files.length,...['2026-0914-0920','2026-0928-1004','2026-0915-0921'].map(basename=>({path:`weekly/${basename}.md`,basename,extension:'md',stat:{ctime:Date.now()}})));
+    content.set(files[0].path,'- [ ] Parent\n  - [x] Done\n  - [ ] Next');
+    content.set(files[1].path,'- [ ] Future');
+    content.set(files[2].path,'- [ ] Invalid date');
+    const template={path:'templates/Weekly Note.md'};
+    files.push(template);
+    content.set(template.path,'### Weekly Goals\n\n### Inbox\n{{title}}');
+    const originalLookup=plugin.app.vault.getAbstractFileByPath;
+    plugin.app.vault.getAbstractFileByPath=path=>path==='weekly'?{path}:originalLookup(path);
+    plugin.app.vault.create=vi.fn(async(path,text)=>{
+      const file={path,basename:path.split('/').pop().slice(0,-3),extension:'md',stat:{ctime:Date.now()}};
+      files.push(file);content.set(path,text);return file;
+    });
+    const openFile=vi.fn();plugin.app.workspace={getLeaf:()=>({openFile})};
+    await Promise.all([plugin.openCurrentWeeklyNote(),plugin.openCurrentWeeklyNote()]);
+    const path='weekly/2026-0921-0927.md';
+    expect(plugin.app.vault.create).toHaveBeenCalledTimes(1);
+    expect(content.get(path)).toContain('### Weekly Goals');
+    expect(content.get(path)).toContain('- [ ] Parent\n  - [ ] Next');
+    expect(content.get(path)).toContain('2026-0921-0927');
+    expect(content.get(files[0].path)).toBe('- Parent\n  - [x] Done');
+    expect(content.get(files[1].path)).toBe('- [ ] Future');
+    expect(content.get(files[2].path)).toBe('- [ ] Invalid date');
+    await plugin.rollover();
+    expect((content.get(path).match(/Parent/g)||[]).length).toBe(1);
+    await plugin.openCurrentWeeklyNote();
+    expect(plugin.app.vault.create).toHaveBeenCalledTimes(1);
+    expect(openFile).toHaveBeenCalledTimes(2);
+  } finally {vi.useRealTimers();}
+});

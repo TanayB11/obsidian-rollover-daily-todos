@@ -5,6 +5,7 @@ import {
 import UndoModal from "./ui/UndoModal";
 import RolloverSettingTab from "./ui/RolloverSettingTab";
 import { partitionTodos } from "./partition-todos";
+import { weeklyBasename, parseWeeklyBasename } from "./weekly-notes";
 
 const MAX_TIME_SINCE_CREATION = 5000; // 5 seconds
 
@@ -39,6 +40,9 @@ function createRepresentationFromHeadings(headings) {
 export default class RolloverTodosPlugin extends Plugin {
   async loadSettings() {
     const DEFAULT_SETTINGS = {
+      weeklyNotesEnabled: false,
+      weeklyFolder: "daily",
+      weeklyTemplate: "templates/Weekly Note.md",
       templateHeading: "none",
       deleteOnComplete: false,
       removeEmptyTodos: false,
@@ -54,7 +58,61 @@ export default class RolloverTodosPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  getNoteSettings() {
+    return this.settings.weeklyNotesEnabled
+      ? { folder: this.settings.weeklyFolder, template: this.settings.weeklyTemplate }
+      : getDailyNoteSettings();
+  }
+
+  currentNoteBasename() {
+    return this.settings.weeklyNotesEnabled
+      ? weeklyBasename(window.moment())
+      : window.moment().format(this.getNoteSettings().format);
+  }
+
+  async openCurrentWeeklyNote() {
+    if (this.openingWeeklyNote) return this.openingWeeklyNote;
+    this.openingWeeklyNote = this.createOrOpenWeeklyNote();
+    try { return await this.openingWeeklyNote; }
+    finally { this.openingWeeklyNote = null; }
+  }
+
+  async createOrOpenWeeklyNote() {
+    if (!this.settings.weeklyNotesEnabled) {
+      new Notice("Enable custom weekly notes in Rollover settings first.");
+      return;
+    }
+    const folder = this.getCleanFolder(this.settings.weeklyFolder);
+    const basename = weeklyBasename(window.moment());
+    const path = `${folder ? folder + "/" : ""}${basename}.md`;
+    let file = this.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      const templatePath = this.settings.weeklyTemplate;
+      const template = this.app.vault.getAbstractFileByPath(templatePath)
+        || this.app.vault.getAbstractFileByPath(templatePath + ".md");
+      if (!template) throw new Error(`Weekly template not found: ${templatePath}`);
+      let content = await this.app.vault.read(template);
+      content = content.replace(/{{title}}/g, () => basename)
+        .replace(/{{date(?::([^}]+))?}}/g, (_, format) => window.moment().format(format || "YYYY-MM-DD"))
+        .replace(/{{time(?::([^}]+))?}}/g, (_, format) => window.moment().format(format || "HH:mm"));
+      let current = "";
+      for (const part of folder.split("/").filter(Boolean)) {
+        current += (current ? "/" : "") + part;
+        if (!this.app.vault.getAbstractFileByPath(current)) await this.app.vault.createFolder(current);
+      }
+      // The explicit awaited rollover runs after the full template is written.
+      this.weeklyCreationPath = path;
+      try {
+        file = await this.app.vault.create(path, content);
+        if (this.settings.rolloverOnFileCreate) await this.rollover(file);
+      } finally { this.weeklyCreationPath = null; }
+    }
+    await this.app.workspace.getLeaf(false).openFile(file);
+    return file;
+  }
+
   isDailyNotesEnabled() {
+    if (this.settings.weeklyNotesEnabled) return true;
     const dailyNotesPlugin = this.app.internalPlugins.plugins["daily-notes"];
     const dailyNotesEnabled = dailyNotesPlugin && dailyNotesPlugin.enabled;
 
@@ -67,7 +125,7 @@ export default class RolloverTodosPlugin extends Plugin {
 
   getLastDailyNote(target) {
     const { moment } = window;
-    let { folder, format } = getDailyNoteSettings();
+    let { folder, format } = this.getNoteSettings();
 
     folder = this.getCleanFolder(folder);
     folder = folder.length === 0 ? folder : folder + "/";
@@ -78,13 +136,7 @@ export default class RolloverTodosPlugin extends Plugin {
     const dailyNoteFiles = this.app.vault
       .getMarkdownFiles()
       .filter((file) => file.path.startsWith(folder))
-      .filter((file) =>
-        moment(
-          file.path.slice(folder.length, -3),
-          format,
-          true
-        ).isValid()
-      )
+      .filter((file) => this.getFileMoment(file, folder, format).isValid())
       .filter((file) => file.basename)
       .filter((file) =>
         this.getFileMoment(file, folder, format).isBefore(
@@ -115,7 +167,9 @@ export default class RolloverTodosPlugin extends Plugin {
       path = path.substring(0, path.length - file.extension.length - 1);
     }
 
-    return window.moment(path, format, true);
+    return this.settings.weeklyNotesEnabled
+      ? parseWeeklyBasename(path, window.moment)
+      : window.moment(path, format, true);
   }
 
   async sortHeadersIntoHierarchy(file) {
@@ -153,13 +207,13 @@ export default class RolloverTodosPlugin extends Plugin {
 
   async performRollover(file = undefined) {
     /*** First we check if the file created is actually a valid daily note ***/
-    let { folder, format } = getDailyNoteSettings();
+    let { folder, format } = this.getNoteSettings();
     let ignoreCreationTime = false;
 
     // Rollover can be called, but we need to get the daily file
     if (file == undefined) {
       const cleanFolder = this.getCleanFolder(folder);
-      file = this.app.vault.getAbstractFileByPath(`${cleanFolder ? cleanFolder + "/" : ""}${window.moment().format(format)}.md`);
+      file = this.app.vault.getAbstractFileByPath(`${cleanFolder ? cleanFolder + "/" : ""}${this.currentNoteBasename()}.md`);
       ignoreCreationTime = true;
     }
     if (!file) return;
@@ -171,7 +225,7 @@ export default class RolloverTodosPlugin extends Plugin {
 
     // is today's daily note
     const today = new Date();
-    const todayFormatted = window.moment(today).format(format);
+    const todayFormatted = this.currentNoteBasename();
     const filePathConstructed = `${folder}${
       folder == "" ? "" : "/"
     }${todayFormatted}.${file.extension}`;
@@ -333,11 +387,20 @@ export default class RolloverTodosPlugin extends Plugin {
     this.undoHistoryTime = new Date();
 
     this.addSettingTab(new RolloverSettingTab(this.app, this));
+    this.addCommand({
+      id: "open-current-weekly-note",
+      name: "Open current weekly note",
+      callback: () => this.openCurrentWeeklyNote().catch(error => new Notice(error.message)),
+    });
+    if (this.settings.weeklyNotesEnabled) {
+      this.addRibbonIcon("calendar-days", "Open current weekly note", () =>
+        this.openCurrentWeeklyNote().catch(error => new Notice(error.message)));
+    }
 
     this.registerEvent(
       this.app.vault.on("create", async (file) => {
         // Check if automatic daily note creation is enabled
-        if (!this.settings.rolloverOnFileCreate) return;
+        if (!this.settings.rolloverOnFileCreate || file.path === this.weeklyCreationPath) return;
         this.rollover(file);
       })
     );

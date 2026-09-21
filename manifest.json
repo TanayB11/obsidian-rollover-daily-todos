@@ -1,7 +1,7 @@
 {
   "id": "obsidian-rollover-daily-todos",
   "name": "Rollover Daily Todos",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "minAppVersion": "0.12.12",
   "description": "Hierarchy-aware weekly rollover fork maintained by TanayB11; original by Lukas Mölschl and Matthew Sessions.",
   "author": "TanayB11 (fork); Lukas Mölschl and Matthew Sessions (original)",

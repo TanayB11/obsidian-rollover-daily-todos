@@ -8,7 +8,7 @@ export default class RolloverSettingTab extends PluginSettingTab {
   }
 
   async getTemplateHeadings() {
-    const { template } = getDailyNoteSettings();
+    const { template } = this.plugin.getNoteSettings();
     if (!template) return [];
 
     let file = this.app.vault.getAbstractFileByPath(template);
@@ -33,6 +33,18 @@ export default class RolloverSettingTab extends PluginSettingTab {
     const templateHeadings = await this.getTemplateHeadings();
 
     this.containerEl.empty();
+    new Setting(this.containerEl)
+      .setName("Custom weekly notes")
+      .setDesc("Use Monday–Sunday filenames such as 2026-0921-0927. Use Open current weekly note; disable core Daily Notes to avoid creating alternate filenames. Reload after toggling to update the ribbon.")
+      .addToggle(toggle => toggle.setValue(this.plugin.settings.weeklyNotesEnabled || false).onChange(async value => {
+        this.plugin.settings.weeklyNotesEnabled = value;
+        await this.plugin.saveSettings();
+      }));
+    for (const [key, name] of [["weeklyFolder", "Weekly folder"], ["weeklyTemplate", "Weekly template"]]) {
+      new Setting(this.containerEl).setName(name).addText(text => text
+        .setValue(this.plugin.settings[key] || "")
+        .onChange(async value => { this.plugin.settings[key] = value; await this.plugin.saveSettings(); }));
+    }
     new Setting(this.containerEl)
       .setName("Template heading")
       .setDesc("Which heading from your template should the todos go under")

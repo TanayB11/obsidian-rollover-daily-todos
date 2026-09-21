@@ -1,8 +1,10 @@
 # Hierarchy-safe weekly rollover fork
 
-This fork adds position-based splitting of nested tasks and supports weekly notes
-configured through core Daily Notes (`weekly/`, format `GGGG-[W]WW`). Weeks begin
-Monday. Manual rollover works throughout the week and excludes future notes.
+This fork adds position-based splitting of nested tasks and custom Monday–Sunday
+weekly notes named `2026-0921-0927.md` in `daily/`. The year belongs to Monday;
+a week crossing New Year is named `2026-1228-0103.md`. Invalid ranges, old daily
+filenames, and future notes are excluded from rollover. Legacy core Daily Notes
+formats remain available when custom weekly mode is disabled.
 
 ## Rules
 
@@ -52,11 +54,20 @@ existing settings and commands remain available; do not enable two copies.
 Community-plugin updates can replace this custom fork, so update it from this
 repository instead.
 
+Enable **Custom weekly notes**, set **Weekly folder** to `daily`, and set
+**Weekly template** to `templates/Weekly Note.md`. Disable core Daily Notes to
+avoid its alternative filenames. Use the **Open current weekly note** command
+(or calendar ribbon icon); bind an existing daily-note hotkey to command ID
+`obsidian-rollover-daily-todos:open-current-weekly-note` if desired. Existing notes
+are opened unchanged; a new note receives the template before automatic rollover.
+Templates support `{{title}}`, `{{date}}`, `{{date:FORMAT}}`, and time equivalents.
+
 Enable **Delete todos from previous day**, **Roll over children of todos**, and
 **Remove empty todos**. Set **Template heading** to `### Inbox` for weekly planning.
 Automatic rollover happens only when a new current note is created, not each
 Monday in the background. The latest earlier note in the configured weekly
-folder is the source. Historical daily notes in other folders are not migrated.
+folder is the source. Historical `YYYY-MM-DD.md` daily notes are not migrated,
+even when they share the `daily/` folder.
 
 Tests: `npm test -- --run`. Includes nested partition cases and mocked-vault
 integration for Wednesday weekly rollover, repeat runs, undo snapshots, and
