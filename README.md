@@ -1,3 +1,72 @@
+# Hierarchy-safe weekly rollover fork
+
+This fork adds position-based splitting of nested tasks and supports weekly notes
+configured through core Daily Notes (`weekly/`, format `GGGG-[W]WW`). Weeks begin
+Monday. Manual rollover works throughout the week and excludes future notes.
+
+## Rules
+
+- Open tasks move to the current note; completed tasks stay in the source.
+- A completed task protects **all descendants**, including unchecked descendants.
+- If an open parent moves but has completed children, its source checkbox becomes
+  a plain bullet so those children retain their context without a duplicate task.
+- Plain list parents (such as Monday) accompany nested open tasks as context.
+- Supporting text under open tasks follows them when **Roll over children** is on.
+- Done markers remain configurable (default `xX-`). Fenced examples are ignored.
+- Empty placeholders stay in the source when **Remove empty todos** is enabled;
+  any nonempty child still moves under a plain context bullet.
+- Source cleanup uses line positions, so matching text in protected branches is safe.
+
+Example source before:
+
+```markdown
+- [ ] Project
+  - [x] Finished
+  - [ ] Next
+- [x] Closed project
+  - [ ] Deliberately left unchecked
+```
+
+After rollover, the source contains:
+
+```markdown
+- Project
+  - [x] Finished
+- [x] Closed project
+  - [ ] Deliberately left unchecked
+```
+
+The destination receives:
+
+```markdown
+- [ ] Project
+  - [ ] Next
+```
+
+## Installation and settings
+
+Build with `npm install --ignore-scripts` then `npm run build`. With Obsidian
+closed, back up the installed plugin files and replace its `main.js` and
+`manifest.json` with this build. The plugin ID is intentionally unchanged, so
+existing settings and commands remain available; do not enable two copies.
+Community-plugin updates can replace this custom fork, so update it from this
+repository instead.
+
+Enable **Delete todos from previous day**, **Roll over children of todos**, and
+**Remove empty todos**. Set **Template heading** to `### Inbox` for weekly planning.
+Automatic rollover happens only when a new current note is created, not each
+Monday in the background. The latest earlier note in the configured weekly
+folder is the source. Historical daily notes in other folders are not migrated.
+
+Tests: `npm test -- --run`. Includes nested partition cases and mocked-vault
+integration for Wednesday weekly rollover, repeat runs, undo snapshots, and
+source preservation when the destination write fails. Actual Obsidian UI testing
+is still required after installation.
+
+---
+
+## Upstream documentation (historical behavior)
+
 # Rollover Daily Todos
 
 [![Build](https://github.com/lumoe/obsidian-rollover-daily-todos/actions/workflows/ci.yml/badge.svg)](https://github.com/lumoe/obsidian-rollover-daily-todos/actions/workflows/ci.yml)

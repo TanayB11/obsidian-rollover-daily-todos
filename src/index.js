@@ -1,12 +1,10 @@
 import { Notice, Plugin } from "obsidian";
 import {
   getDailyNoteSettings,
-  getAllDailyNotes,
-  getDailyNote,
 } from "obsidian-daily-notes-interface";
 import UndoModal from "./ui/UndoModal";
 import RolloverSettingTab from "./ui/RolloverSettingTab";
-import { getTodos } from "./get-todos";
+import { partitionTodos } from "./partition-todos";
 
 const MAX_TIME_SINCE_CREATION = 5000; // 5 seconds
 
@@ -67,15 +65,14 @@ export default class RolloverTodosPlugin extends Plugin {
     return dailyNotesEnabled || periodicNotesEnabled;
   }
 
-  getLastDailyNote() {
+  getLastDailyNote(target) {
     const { moment } = window;
     let { folder, format } = getDailyNoteSettings();
 
     folder = this.getCleanFolder(folder);
     folder = folder.length === 0 ? folder : folder + "/";
 
-    const dailyNoteRegexMatch = new RegExp("^" + folder + "(.*).md$");
-    const todayMoment = moment();
+    const todayMoment = this.getFileMoment(target, folder, format);
 
     // get all notes in directory that aren't null
     const dailyNoteFiles = this.app.vault
@@ -83,14 +80,14 @@ export default class RolloverTodosPlugin extends Plugin {
       .filter((file) => file.path.startsWith(folder))
       .filter((file) =>
         moment(
-          file.path.replace(dailyNoteRegexMatch, "$1"),
+          file.path.slice(folder.length, -3),
           format,
           true
         ).isValid()
       )
       .filter((file) => file.basename)
       .filter((file) =>
-        this.getFileMoment(file, folder, format).isSameOrBefore(
+        this.getFileMoment(file, folder, format).isBefore(
           todayMoment,
           "day"
         )
@@ -102,7 +99,7 @@ export default class RolloverTodosPlugin extends Plugin {
         this.getFileMoment(b, folder, format).valueOf() -
         this.getFileMoment(a, folder, format).valueOf()
     );
-    return sorted[1];
+    return sorted[0];
   }
 
   getFileMoment(file, folder, format) {
@@ -118,18 +115,7 @@ export default class RolloverTodosPlugin extends Plugin {
       path = path.substring(0, path.length - file.extension.length - 1);
     }
 
-    return moment(path, format);
-  }
-
-  async getAllUnfinishedTodos(file) {
-    const dn = await this.app.vault.read(file);
-    const dnLines = dn.split(/\r?\n|\r|\n/g);
-
-    return getTodos({
-      lines: dnLines,
-      withChildren: this.settings.rolloverChildren,
-      doneStatusMarkers: this.settings.doneStatusMarkers,
-    });
+    return window.moment(path, format, true);
   }
 
   async sortHeadersIntoHierarchy(file) {
@@ -159,14 +145,21 @@ export default class RolloverTodosPlugin extends Plugin {
   }
 
   async rollover(file = undefined) {
+    if (this.rolloverRunning) return;
+    this.rolloverRunning = true;
+    try { return await this.performRollover(file); }
+    finally { this.rolloverRunning = false; }
+  }
+
+  async performRollover(file = undefined) {
     /*** First we check if the file created is actually a valid daily note ***/
     let { folder, format } = getDailyNoteSettings();
     let ignoreCreationTime = false;
 
     // Rollover can be called, but we need to get the daily file
     if (file == undefined) {
-      const allDailyNotes = getAllDailyNotes();
-      file = getDailyNote(window.moment(), allDailyNotes);
+      const cleanFolder = this.getCleanFolder(folder);
+      file = this.app.vault.getAbstractFileByPath(`${cleanFolder ? cleanFolder + "/" : ""}${window.moment().format(format)}.md`);
       ignoreCreationTime = true;
     }
     if (!file) return;
@@ -202,14 +195,21 @@ export default class RolloverTodosPlugin extends Plugin {
         this.settings;
 
       // check if there is a daily note from yesterday
-      const lastDailyNote = this.getLastDailyNote();
+      const lastDailyNote = this.getLastDailyNote(file);
       if (!lastDailyNote) return;
 
       // TODO: Rollover to subheadings (optional)
       //this.sortHeadersIntoHierarchy(lastDailyNote)
 
       // get unfinished todos from yesterday, if exist
-      let todos_yesterday = await this.getAllUnfinishedTodos(lastDailyNote);
+      const lastDailyNoteContent = await this.app.vault.read(lastDailyNote);
+      const partition = partitionTodos({
+        lines: lastDailyNoteContent.split(/\r\n|\n|\r/),
+        withChildren: this.settings.rolloverChildren,
+        doneStatusMarkers: this.settings.doneStatusMarkers,
+        removeEmptyTodos,
+      });
+      let todos_yesterday = partition.todos;
 
       console.log(
         `rollover-daily-todos: ${todos_yesterday.length} todos found in ${lastDailyNote.basename}.md`
@@ -231,23 +231,9 @@ export default class RolloverTodosPlugin extends Plugin {
         },
       };
 
-      // Potentially filter todos from yesterday for today
-      let todosAdded = 0;
-      let emptiesToNotAddToTomorrow = 0;
-      let todos_today = !removeEmptyTodos ? todos_yesterday : [];
-      if (removeEmptyTodos) {
-        todos_yesterday.forEach((line, i) => {
-          const trimmedLine = (line || "").trim();
-          if (trimmedLine != "- [ ]" && trimmedLine != "- [  ]") {
-            todos_today.push(line);
-            todosAdded++;
-          } else {
-            emptiesToNotAddToTomorrow++;
-          }
-        });
-      } else {
-        todosAdded = todos_yesterday.length;
-      }
+      const todos_today = todos_yesterday;
+      const todosAdded = todos_today.filter(line => /^\s*(?:[-*+]|\d+[.)])\s+\[/.test(line)).length;
+      const emptiesToNotAddToTomorrow = 0;
 
       // get today's content and modify it
       let templateHeadingNotFoundMessage = "";
@@ -287,20 +273,16 @@ export default class RolloverTodosPlugin extends Plugin {
 
       // if deleteOnComplete, get yesterday's content and modify it
       if (deleteOnComplete) {
-        let lastDailyNoteContent = await this.app.vault.read(lastDailyNote);
+        if (await this.app.vault.read(lastDailyNote) !== lastDailyNoteContent) {
+          new Notice("Source changed during rollover. Copied tasks safely; source was not modified.");
+          return;
+        }
         undoHistoryInstance.previousDay = {
           file: lastDailyNote,
           oldContent: `${lastDailyNoteContent}`,
         };
-        let lines = lastDailyNoteContent.split("\n");
-
-        for (let i = lines.length; i >= 0; i--) {
-          if (todos_yesterday.includes(lines[i])) {
-            lines.splice(i, 1);
-          }
-        }
-
-        const modifiedContent = lines.join("\n");
+        const newline = lastDailyNoteContent.includes("\r\n") ? "\r\n" : "\n";
+        const modifiedContent = partition.remaining.join(newline);
         await this.app.vault.modify(lastDailyNote, modifiedContent);
       }
 

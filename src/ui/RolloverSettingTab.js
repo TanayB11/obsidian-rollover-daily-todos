@@ -55,7 +55,7 @@ export default class RolloverSettingTab extends PluginSettingTab {
     new Setting(this.containerEl)
       .setName("Delete todos from previous day")
       .setDesc(
-        `Once todos are found, they are added to Today's Daily Note. If successful, they are deleted from Yesterday's Daily note. Enabling this is destructive and may result in lost data. Keeping this disabled will simply duplicate them from yesterday's note and place them in the appropriate section. Note that currently, duplicate todos will be deleted regardless of what heading they are in, and which heading you choose from above.`
+        `Move rolled tasks out of the previous note after writing the destination. Completed branches stay in place; a moved parent becomes a plain context bullet when needed. Disable to keep the source unchanged.`
       )
       .addToggle((toggle) =>
         toggle
@@ -83,7 +83,7 @@ export default class RolloverSettingTab extends PluginSettingTab {
     new Setting(this.containerEl)
       .setName("Roll over children of todos")
       .setDesc(
-        `By default, only the actual todos are rolled over. If you add nested Markdown-elements beneath your todos, these are not rolled over but stay in place, possibly altering the logic of your previous note. This setting allows for also migrating the nested elements.`
+        `Include nested supporting text with open tasks. Completed tasks and all their descendants always stay in the previous note. Incomplete descendants of completed parents never roll over.`
       )
       .addToggle((toggle) =>
         toggle
@@ -95,9 +95,9 @@ export default class RolloverSettingTab extends PluginSettingTab {
       );
 
     new Setting(this.containerEl)
-      .setName("Automatic rollover on daily note open")
+      .setName("Automatic rollover on note creation")
       .setDesc(
-        `If enabled, the plugin will automatically rollover todos when you open a daily note.`
+        `If enabled, the plugin will automatically rollover todos when you create the current daily or weekly note.`
       )
       .addToggle((toggle) =>
         toggle
